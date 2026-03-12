@@ -2049,7 +2049,6 @@ with tab_scenario:
 
     proj_rows = []
     for i, ch in enumerate(CHANNELS):
-        a        = alpha_arr[i]
         curr_sp  = sc_curr_spend[ch]
         new_sp   = sc_new_spend.get(ch, curr_sp)
         sp_delta = new_sp - curr_sp
@@ -2060,45 +2059,131 @@ with tab_scenario:
         proj_rows.append({
             "Channel":         CHANNEL_LABELS[ch],
             "Type":            CHANNEL_TYPE[ch],
+            "ch_key":          ch,
             "Shapley Wt (%)":  round(sh_w.get(ch, 0) * 100, 1),
             "Current Spend":   round(curr_sp, 0),
             "New Spend":       round(new_sp, 0),
-            "Δ Spend":         round(sp_delta, 0),
+            "sp_delta_raw":    round(sp_delta, 0),
             "Curr Conv (est)": round(c_resp, 1),
             "New Conv (est)":  round(n_resp, 1),
-            "Conv Lift":       round(lift, 1),
-            "Marginal ROI":    round(mroi, 2),
+            "lift_raw":        round(lift, 1),
+            "mroi_raw":        round(mroi, 2),
         })
 
-    proj_df = pd.DataFrame(proj_rows).sort_values("Conv Lift", ascending=False)
+    proj_df = pd.DataFrame(proj_rows).sort_values("lift_raw", ascending=False)
 
-    def _color_lift(val):
-        if val > 0:  return "color:#27ae60;font-weight:600"
-        if val < 0:  return "color:#e74c3c;font-weight:600"
-        return ""
+    # ── colour helpers ────────────────────────────────────────────────────────
+    def _spend_delta_color(v):
+        return "#27ae60" if v >= 0 else "#e74c3c"
 
-    def _color_mroi(val):
-        if val > 1.5: return "background-color:#d5f5e3"
-        if val > 1.0: return "background-color:#eafaf1"
-        if val < 0:   return "background-color:#fde8e8"
-        return ""
+    def _lift_color(v):
+        return "#27ae60" if v >= 0 else "#e74c3c"
 
-    st.dataframe(
-        proj_df.style
-            .applymap(_color_lift, subset=["Conv Lift", "Δ Spend"])
-            .applymap(_color_mroi, subset=["Marginal ROI"])
-            .format({
-                "Shapley Wt (%)":  "{:.1f}%",
-                "Current Spend":   "${:,.0f}",
-                "New Spend":       "${:,.0f}",
-                "Δ Spend":         "${:+,.0f}",
-                "Curr Conv (est)": "{:.1f}",
-                "New Conv (est)":  "{:.1f}",
-                "Conv Lift":       "{:+.1f}",
-                "Marginal ROI":    "{:.2f}x",
-            }),
-        width='stretch', hide_index=True,
-    )
+    def _mroi_bg(v):
+        if v > 1.5:  return "#d5f5e3"
+        if v > 1.0:  return "#eafaf1"
+        if v < 0:    return "#fde8e8"
+        return "#ffffff"
+
+    def _mroi_fg(v):
+        if v > 1.5:  return "#1e8449"
+        if v > 1.0:  return "#27ae60"
+        if v < 0:    return "#e74c3c"
+        return "#555555"
+
+    def _type_badge(t):
+        if t == "Online":
+            return ("<span style='background:#e3f2fd;color:#1976d2;"
+                    "border:1px solid #90caf9;border-radius:20px;"
+                    "padding:1px 9px;font-size:0.72rem;font-weight:600'>"
+                    "Online</span>")
+        return ("<span style='background:#fff3e0;color:#e65100;"
+                "border:1px solid #ffcc80;border-radius:20px;"
+                "padding:1px 9px;font-size:0.72rem;font-weight:600'>"
+                "Offline</span>")
+
+    def _shapley_bar(pct):
+        bar_w = min(int(pct * 4), 60)
+        return (f"<div style='display:flex;align-items:center;gap:6px'>"
+                f"<div style='width:{bar_w}px;height:7px;border-radius:4px;"
+                f"background:#9b59b6;opacity:0.75'></div>"
+                f"<span style='font-size:0.82rem;color:#555'>{pct:.1f}%</span>"
+                f"</div>")
+
+    # ── build HTML table ──────────────────────────────────────────────────────
+    header_style = ("background:#f8f9fa;font-size:0.75rem;font-weight:700;"
+                    "color:#6c757d;text-transform:uppercase;letter-spacing:.06em;"
+                    "padding:10px 14px;border-bottom:2px solid #dee2e6;white-space:nowrap")
+    cell_style   = "padding:9px 14px;font-size:0.85rem;border-bottom:1px solid #f0f0f0;vertical-align:middle"
+
+    headers = ["Channel", "Type", "Shapley Wt", "Current Spend",
+               "New Spend", "Δ Spend", "Curr Conv", "New Conv", "Conv Lift", "Marginal ROI"]
+
+    rows_html = ""
+    for _, row in proj_df.iterrows():
+        sd_col  = _spend_delta_color(row["sp_delta_raw"])
+        lf_col  = _lift_color(row["lift_raw"])
+        mr_bg   = _mroi_bg(row["mroi_raw"])
+        mr_fg   = _mroi_fg(row["mroi_raw"])
+        sp_sign = "+" if row["sp_delta_raw"] >= 0 else ""
+        lf_sign = "+" if row["lift_raw"] >= 0 else ""
+        ch_color = CHANNEL_COLORS.get(row["ch_key"], "#aaa")
+
+        rows_html += f"""
+        <tr style='background:#fff' onmouseover="this.style.background='#fafafa'"
+            onmouseout="this.style.background='#fff'">
+            <td style='{cell_style}'>
+                <div style='display:flex;align-items:center;gap:7px'>
+                    <div style='width:10px;height:10px;border-radius:3px;
+                                background:{ch_color};flex-shrink:0'></div>
+                    <span style='font-weight:600;color:#212529'>{row['Channel']}</span>
+                </div>
+            </td>
+            <td style='{cell_style}'>{_type_badge(row['Type'])}</td>
+            <td style='{cell_style}'>{_shapley_bar(row['Shapley Wt (%)'])}</td>
+            <td style='{cell_style};color:#555'>${row['Current Spend']:,.0f}</td>
+            <td style='{cell_style};font-weight:600;color:#212529'>${row['New Spend']:,.0f}</td>
+            <td style='{cell_style};font-weight:700;color:{sd_col}'>{sp_sign}${row['sp_delta_raw']:,.0f}</td>
+            <td style='{cell_style};color:#555'>{row['Curr Conv (est)']:.1f}</td>
+            <td style='{cell_style};color:#212529'>{row['New Conv (est)']:.1f}</td>
+            <td style='{cell_style};font-weight:700;color:{lf_col}'>{lf_sign}{row['lift_raw']:.1f}</td>
+            <td style='{cell_style};background:{mr_bg};font-weight:700;
+                        color:{mr_fg};border-radius:6px;text-align:center'>
+                {row['mroi_raw']:.2f}x
+            </td>
+        </tr>"""
+
+    table_html = f"""
+    <div style='overflow-x:auto;border-radius:12px;
+                border:1px solid #dee2e6;margin-top:8px;box-shadow:0 1px 4px rgba(0,0,0,.06)'>
+        <table style='width:100%;border-collapse:collapse;font-family:Segoe UI,sans-serif'>
+            <thead>
+                <tr>
+                    {''.join(f"<th style='{header_style}'>{h}</th>" for h in headers)}
+                </tr>
+            </thead>
+            <tbody>{rows_html}</tbody>
+        </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
+
+    # ── legend ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style='display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;
+                font-size:0.75rem;color:#6c757d'>
+        <span><span style='display:inline-block;width:10px;height:10px;
+              border-radius:2px;background:#d5f5e3;border:1px solid #a9dfbf;
+              margin-right:4px'></span>Marginal ROI > 1.5x — high efficiency</span>
+        <span><span style='display:inline-block;width:10px;height:10px;
+              border-radius:2px;background:#eafaf1;border:1px solid #a9dfbf;
+              margin-right:4px'></span>1.0x – 1.5x — above break-even</span>
+        <span><span style='display:inline-block;width:10px;height:10px;
+              border-radius:2px;background:#fde8e8;border:1px solid #f5b7b1;
+              margin-right:4px'></span>Negative — spend cut, conversions lost</span>
+        <span style='margin-left:auto'>Sorted by Conv Lift ↓</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 4 — Scenario Comparison
